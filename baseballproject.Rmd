@@ -1,0 +1,254 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+require(devtools)
+require(baseballr)
+require(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(scales)
+```
+
+
+```{r}
+dates <- seq.Date(as.Date('2021-04-01'), as.Date('2021-07-30'), by = 7)
+
+date_grid <- tibble(start_date = dates, end_date = dates+6)
+
+savant_data <- purrr::map2_df(.x = date_grid$start_date,
+                              .y = date_grid$end_date,
+                              ~scrape_statcast_savant(start_date = .x,
+                                                      end_date = .y,
+                                                      player_type = 'pitcher'))
+write.csv(savant_data,"savant_data.csv", row.names = TRUE)
+
+df = read.csv("savant_data.csv", header = TRUE)
+paste('Number of pitches:', nrow(df))
+
+```
+
+
+```{r}
+df[,c("pitch_type", "game_date", "release_speed",
+      "release_pos_x", "release_pos_z", "player_name",
+      "zone", "des", "p_throws", "home_team", "away_team",
+      "plate_x", "plate_z", "inning_topbot", "launch_speed",
+      "launch_angle", "effective_speed", "release_spin_rate",
+      "release_extension", "estimated_ba_using_speedangle",
+      "estimated_woba_using_speedangle", "woba_value", "woba_denom",
+      "babip_value", "iso_value", "launch_speed_angle",
+      "at_bat_number", "pitch_number", "pitch_name", "spin_axis")]
+
+# remove NAs
+df <- df[!(is.na(df$release_spin_rate)|is.na(df$pitch_type)|is.na(df$pitch_name)|is.na(df$zone)), ]
+
+```
+
+
+```{r}
+#create Baur units column
+df$b_units <- df$release_spin_rate/df$release_speed
+
+#month and week of game date
+df$month <- month(as_date(df$game_date))
+df$week <- week(as_date(df$game_date))
+df$week_of <- as.Date(sapply (as_date(df$game_date), function(d) { return (d + (-6 - as.POSIXlt(d)$wday %% -7 ))}), origin = "1970-01-01")
+df$pitch_team <- ifelse(df$inning_topbot == "Bot", df$away_team,df$home_team)
+df2 <- df[df$pitch_name != "Fastball" & df$pitch_name != "Knuckleball" & df$pitch_name != "Eephus" & df$pitch_name != "2-Seam Fastball" & df$pitch_name != "Screwball",]
+```
+
+
+```{r}
+# start of analysis
+
+daily_avg_spin <- aggregate(df2$release_spin_rate, list(df2$game_date), FUN=mean)
+colnames(daily_avg_spin) <- c('date','spin_rate')
+weekly_avg_spin <- aggregate(df2$release_spin_rate, list(df2$week_of), FUN=mean)
+colnames(weekly_avg_spin) <- c('week_of','spin_rate')
+monthly_avg_spin <- aggregate(df2$release_spin_rate, list(df2$month), FUN=mean)
+colnames(monthly_avg_spin) <- c('month','spin_rate')
+```
+
+
+```{r}
+ggplot(data=monthly_avg_spin, aes(x=as.Date(paste0("2021-", month, "-1")), y=spin_rate, group=1)) +
+  geom_line(linetype="solid", size=2, color="#0099f9")+
+  labs(
+    x = "Month",
+    y = "Average Spin Rate",
+    title = "Average Spin Rate Per Month",
+    subtitle = "All Pitches (2021)",
+    caption = "Source: Baseball Savant"
+  )+
+  scale_x_date(date_labels = "%b")
+```
+
+```{r}
+ggplot(data=weekly_avg_spin, aes(x=week_of, y=spin_rate, group=1)) +
+  geom_line(linetype="solid", size=2, color="#0099f9")+
+  labs(
+    x = "Week Of",
+    y = "Average Spin Rate",
+    title = "Average Spin Rate Per Week",
+    subtitle = "All Pitches (2021)",
+    caption = "Source: Baseball Savant"
+  ) +
+  scale_x_date(breaks = scales::breaks_pretty(10))
+```
+
+```{r}
+ggplot(data=daily_avg_spin, aes(x=as.Date(date), y=spin_rate, group=1)) +
+  geom_line(linetype="solid", size=1, color="#0099f9")+
+  labs(
+    x = "Date",
+    y = "Average Spin Rate",
+    title = "Average Spin Rate Per Day",
+    subtitle = "All Pitches (2021)",
+    caption = "Source: Baseball Savant"
+  ) +
+  scale_x_date(date_labels = "%b-%e") +
+  geom_vline(xintercept = as.numeric(ymd("2021-06-05")), linetype="solid", color = "yellow", size=1.5) +
+  geom_text(aes(x=as.Date("2021-06-05"), label="Threat Of Enforcement", y=2340)) +
+  geom_vline(xintercept = as.numeric(ymd("2021-06-21")), linetype="solid", color = "red", size=1.5) +
+  geom_text(aes(x=as.Date("2021-06-21")+10, label="Enforcement", y=2300))
+```
+
+```{r}
+june_1_15_daily_spin <- daily_avg_spin[daily_avg_spin$date >= '2021-05-31' & daily_avg_spin$date <= '2021-06-15',]
+
+ggplot(data=june_1_15_daily_spin, aes(x=as.Date(date), y=spin_rate, group=1)) +
+  geom_line(linetype="solid", size=2, color="#0099f9")+
+  labs(
+    x = "Date",
+    y = "Average Spin Rate",
+    title = "Average Spin Rate Per Day",
+    subtitle = "All Pitches (2021)",
+    caption = "Source: Baseball Savant"
+  ) +
+  scale_x_date(date_labels = "%Y-%b-%e",date_breaks  ="1 day") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+pre_freq <- df2[df2$game_date <= '2021-06-07',]
+pre_freq <- aggregate(pre_freq$release_spin_rate, list(pre_freq$pitch_name), FUN = length)
+colnames(pre_freq) <- c('pitch_name','pre_count')
+
+pre_freq$pre_frequency <- round(pre_freq$pre_count / sum(pre_freq$pre_count) * 100, digits = 2)
+
+post_freq <- df2[df2$game_date > '2021-06-07',]
+post_freq <- aggregate(post_freq$release_spin_rate, list(post_freq$pitch_name), FUN = length)
+colnames(post_freq) <- c('pitch_name', 'post_count')
+
+post_freq$post_frequency <- round(post_freq$post_count / sum(post_freq$post_count) * 100, digits = 2)
+
+pre_post_freq <- merge(pre_freq, post_freq, by = "pitch_name")
+
+pre_post_freq$freq_diff <- pre_post_freq$post_frequency - pre_post_freq$pre_frequency
+
+pre_post_freq$freq_diff_pct_freq <- round((pre_post_freq$freq_diff / pre_post_freq$pre_frequency) * 100, digits = 2)
+
+pre_post_freq
+```
+
+```{r}
+pre_spin <- df2[df2$game_date <= '2021-06-07',]
+pre_spin <- aggregate(pre_spin$release_spin_rate, list(pre_spin$pitch_name), FUN = mean)
+colnames(pre_spin) <- c('pitch_name','pre_spin')
+
+post_spin <- df2[df2$game_date > '2021-06-07',]
+post_spin <- aggregate(post_spin$release_spin_rate, list(post_spin$pitch_name), FUN = mean)
+colnames(post_spin) <- c('pitch_name','post_spin')
+
+pre_post_spin <- merge(pre_spin, post_spin, by = "pitch_name")
+
+pre_post_spin$spin_diff <- pre_post_spin$post_spin - pre_post_spin$pre_spin
+
+pre_post_spin$spin_diff_pct_spin <- (pre_post_spin$spin_diff / pre_post_spin$pre_spin) * 100
+
+pre_post_spin
+
+```
+
+```{r}
+team_pre_spin <- df2[df2$game_date <= '2021-06-07',]
+team_pre_spin <- aggregate(team_pre_spin$release_spin_rate, list(team_pre_spin$pitch_team), FUN = mean)
+colnames(team_pre_spin) <- c('pitch_team','pre_spin')
+
+team_post_spin <- df2[df2$game_date > '2021-06-07',]
+team_post_spin <- aggregate(team_post_spin$release_spin_rate, list(team_post_spin$pitch_team), FUN = mean)
+colnames(team_post_spin) <- c('pitch_team','post_spin')
+
+team_spin_comp <- merge(team_pre_spin, team_post_spin, by = "pitch_team")
+
+team_spin_comp$difference <- team_spin_comp$post_spin - team_spin_comp$pre_spin
+
+team_spin_comp <- team_spin_comp[order(team_spin_comp$difference),]
+team_spin_comp
+```
+```{r}
+ggplot(team_spin_comp, aes(x = pitch_team, y = difference, group = 1)) +
+  geom_line(linetype="solid", size=2, color="#0099f9")+
+  labs(
+    x = "Pitch Team",
+    y = "Spin Rate Difference",
+    title = "Difference in Spin Rate by Team",
+    subtitle = "All Pitches (2021)",
+    caption = "Source: Baseball Savant"
+  ) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+pitcher_pre_spin <- df2[df2$game_date <= '2021-06-07',]
+pitcher_pre_spin <- pitcher_pre_spin <- aggregate(pitcher_pre_spin$release_spin_rate, list(pitcher_pre_spin$player_name), FUN = mean)
+colnames(pitcher_pre_spin) <- c('player_name','pre_spin')
+
+pitcher_post_spin <- df2[df2$game_date > '2021-06-07',]
+pitcher_post_spin <- pitcher_post_spin <- aggregate(pitcher_post_spin$release_spin_rate, list(pitcher_post_spin$player_name), FUN = mean)
+colnames(pitcher_post_spin) <- c('player_name','post_spin')
+
+pitcher_spin_comp <- merge(pitcher_pre_spin, pitcher_post_spin, by = "player_name")
+
+pitcher_spin_comp$spin_diff <- pitcher_spin_comp$post_spin - pitcher_spin_comp$pre_spin
+
+pitcher_spin_comp <- pitcher_spin_comp[order(pitcher_spin_comp$spin_diff),]
+pitcher_spin_comp
+
+
+```
+```{r}
+pitches_thrown <- df2
+pitches_thrown <- pitches_thrown <- aggregate(pitches_thrown$pitch_name, list(pitches_thrown$player_name), FUN = length)
+colnames(pitches_thrown) <- c('player_name', 'pitches_thrown')
+
+pitches_thrown
+
+```
+
+```{r}
+apps_after_grouper <- df2[df2$game_date >= '2021-06-07',]
+apps_after_grouper <- aggregate(apps_after_grouper$game_date, list(apps_after_grouper$player_name), FUN = function(x) length(unique(x)))
+
+colnames(apps_after_grouper) <- c('player_name', 'appearances_june_7_later')
+
+
+
+
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
